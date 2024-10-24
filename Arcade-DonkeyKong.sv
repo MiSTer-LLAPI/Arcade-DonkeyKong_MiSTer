@@ -21,21 +21,21 @@
 module emu
 (
 	//Master input clock
-	input 				CLK_50M,
+	input         CLK_50M,
 
 	//Async reset from top-level module.
 	//Can be used as initial reset.
-	input 				RESET,
+	input         RESET,
 
 	//Must be passed to hps_io module
-	inout [45:0] 	HPS_BUS,
+	inout  [48:0] HPS_BUS,
 
 	//Base video clock. Usually equals to CLK_SYS.
-	output 				CLK_VIDEO,
+	output        CLK_VIDEO,
 
 	//Multiple resolutions are supported using different CE_PIXEL rates.
 	//Must be based on CLK_VIDEO
-	output 				CE_PIXEL,
+	output        CE_PIXEL,
 
 	//Video aspect ratio for HDMI. Most retro systems have ratio 4:3.
 	//if VIDEO_ARX[12] or VIDEO_ARY[12] is set then [11:0] contains scaled size instead of aspect ratio.
@@ -51,13 +51,14 @@ module emu
 	output        VGA_F1,
 	output [1:0]  VGA_SL,
 	output        VGA_SCALER, // Force VGA scaler
+	output        VGA_DISABLE, // analog out is off
 
 	input  [11:0] HDMI_WIDTH,
 	input  [11:0] HDMI_HEIGHT,
 	output        HDMI_FREEZE,
 
 `ifdef MISTER_FB
-	// Use framebuffer in DDRAM (USE_FB=1 in qsf)
+	// Use framebuffer in DDRAM
 	// FB_FORMAT:
 	//    [2:0] : 011=8bpp(palette) 100=16bpp 101=24bpp 110=32bpp
 	//    [3]   : 0=16bits 565 1=16bits 1555
@@ -193,32 +194,41 @@ assign BUTTONS   = llapi_osd;
 
 assign AUDIO_MIX = 0;
 assign HDMI_FREEZE = 0;
+assign VGA_DISABLE = 0;
 assign FB_FORCE_BLANK = 0;
 
 wire [1:0] ar = status[20:19];
 
-assign VIDEO_ARX = (!ar) ? ((status[2]|mod_pestplace)  ? 8'd4 : 8'd3) : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? ((status[2]|mod_pestplace)  ? 8'd3 : 8'd4) : 12'd0;
+assign VIDEO_ARX = (!ar) ? ((status[2]|mod_pestplace)  ? 8'd8 : 8'd7) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? ((status[2]|mod_pestplace)  ? 8'd7 : 8'd8) : 12'd0;
 
-`include "build_id.v" 
+// Status Bit Map:
+//             Upper                             Lower
+// 0         1         2         3          4         5         6
+// 01234567890123456789012345678901 23456789012345678901234567890123
+// 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
+// XXXXXX X           XXXXXXXXXXXXX
+
+`include "build_id.v"
 localparam CONF_STR = {
 	"A.DKONG;;",
+	//LLAPI: OSD menu item
+	//LLAPI Always ON
+	"-,<< LLAPI enabled >>;",
+	"-,<< Use USER I/O port >>;",
+	"-;",
+	//END LLAPI	
 	"H0OJK,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"H1H0O2,Orientation,Vert,Horz;",
 	"O35,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 	"H1O7,Flip Screen,Off,On;",
 	"OOS,Analog Video H-Pos,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31;",
-        "OTV,Analog Video V-Pos,0,1,2,3,4,5,6,7;",
+	"OTV,Analog Video V-Pos,0,1,2,3,4,5,6,7;",
+	"O6,Sound Effects,Sampled,Emulated;",
 	"H2ON,Autosave Hiscores,Off,On;",
 	"P1,Pause options;",
 	"P1OL,Pause when OSD is open,On,Off;",
-	"P1OM,Dim video after 10s,On,Off;",
-	"-;",
-	
-	//LLAPI
-	"OM,Serial Mode,Off,LLAPI;",
-	//END
-	
+	"P1OM,Dim video after 10s,On,Off;",	
 	"-;",
 	"DIP;",
 	"-;",
@@ -276,6 +286,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.forced_scandoubler(forced_scandoubler),
 	.gamma_bus(gamma_bus),
 	.direct_video(direct_video),
+	.video_rotated(video_rotated),
 
 	.ioctl_upload(ioctl_upload),
 	.ioctl_upload_req(ioctl_upload_req),
@@ -297,7 +308,7 @@ wire [71:0] llapi_analog, llapi_analog2;
 wire [7:0]  llapi_type, llapi_type2;
 wire llapi_en, llapi_en2;
 
-wire llapi_select = status[22];
+wire llapi_select = 1'b1;
 
 wire llapi_latch_o, llapi_latch_o2, llapi_data_o, llapi_data_o2;
 
@@ -409,7 +420,7 @@ reg [7:0] sw[8];
 always @(posedge clk_sys) if (ioctl_wr && (ioctl_index==254) && !ioctl_addr[24:3]) sw[ioctl_addr[2:0]] <= ioctl_dout;
 
 // Core specific mods
-reg mod_dk = 0;
+//reg mod_dk = 0;
 reg mod_dkjr = 0;
 reg mod_dk3 = 0;
 reg mod_radarscope=0;
@@ -419,8 +430,8 @@ reg mod_pestplace=0;
 always @(posedge clk_sys) begin
 	reg [7:0] mod = 0;
 	if (ioctl_wr & (ioctl_index==1)) mod <= ioctl_dout;
-	
-	mod_dk <= (mod == 0);
+
+	//mod_dk <= (mod == 0);
 	mod_dkjr <= (mod == 1);
 	mod_dk3 <= (mod == 2);
 	mod_radarscope <= (mod == 3);
@@ -429,6 +440,7 @@ end
 
 //LLAPI
 // Player inputs
+
 wire m_up_2     = joy_1[3];
 wire m_down_2   = joy_1[2];
 wire m_left_2   = joy_1[1];
@@ -446,6 +458,7 @@ wire m_start2 =  joy_0[6];
 wire m_coin   =  joy_0[7];
 wire m_pause   = joy_0[8];
 //END
+
 
 
 // PAUSE SYSTEM
@@ -467,14 +480,16 @@ wire [3:0] r,g,b;
 
 reg ce_pix;
 always @(posedge clk_49) begin
-        reg [2:0] div;
+	reg [2:0] div;
 
-        div <= div + 1'd1;
-        ce_pix <= !div;
+	div <= div + 1'd1;
+	ce_pix <= !div;
 end
 
 wire no_rotate = status[2] | direct_video | mod_pestplace;
 wire rotate_ccw = 0;
+wire flip = 0;
+wire video_rotated;
 screen_rotate screen_rotate (.*);
 
 
@@ -494,29 +509,28 @@ arcade_video #(256,12) arcade_video
 );
 
 
-wire [7:0] audio;
-assign AUDIO_L = {audio,audio};
+wire [15:0] audio;
+assign AUDIO_L = audio;
 assign AUDIO_R = AUDIO_L;
-assign AUDIO_S = 0;
+assign AUDIO_S = 1;
 
 assign hblank = hbl[8];
 
-reg  ce_vid;
+//reg  ce_vid;
 wire clk_pix;
 wire hbl0;
 reg [8:0] hbl;
 always @(posedge clk_sys) begin
 	reg old_pix;
 	old_pix <= clk_pix;
-	ce_vid <= 0;
+	//ce_vid <= 0;
 	if(~old_pix & clk_pix) begin
-		ce_vid <= 1;
+		//ce_vid <= 1;
 		hbl <= (hbl<<1)|hbl0;
 	end
 end
 
 wire reset = RESET | status[0] | buttons[1]| ioctl_download;
-
 
 
 wire [15:0] main_rom_a;
@@ -562,7 +576,7 @@ dpram #(16,8) wav_rom (
 
 
 
-dkong_top dkong(				   
+dkong_top dkong(
 	.I_CLK_24576M(clk_sys),
 	.I_RESETn(~reset),
 	.I_U1(~m_up),
@@ -570,7 +584,7 @@ dkong_top dkong(
 	.I_L1(~m_left),
 	.I_R1(~m_right),
 	.I_J1(~m_fire),
-	
+
 	.I_U2(~m_up_2),
 	.I_D2(~m_down_2),
 	.I_L2(~m_left_2),
@@ -591,6 +605,7 @@ dkong_top dkong(
 	.O_PIX(clk_pix),
 
 	.flip_screen(status[7]),
+	.use_emulated_sfx(status[6]),
 	.H_OFFSET(status[28:24]),
 	.V_OFFSET(status[31:29]),
 
